@@ -1,0 +1,29 @@
+.DS_Store
+.build/
+*.xcuserstate
+xcuserdata/
+DerivedData/
+
+# Per-developer signing
+*.local.xcconfig
+
+# Certificates, keys, profiles, secrets
+*.p12
+*.cer
+*.certSigningRequest
+*.mobileprovision
+*.provisionprofile
+*.p8
+.env
+.env.*
+
+# More signing / distribution artifacts
+*.keychain
+*.keychain-db
+*.pem
+*.key
+*.xcarchive
+*.ipa
+*.dSYM.zip
+ExportOptions.plist
+!.env.example
