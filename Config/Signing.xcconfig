@@ -1,0 +1,7 @@
+// Shared signing settings. Committed. Contains no team or identity.
+// Per-developer values go in Signing.local.xcconfig (gitignored);
+// copy Signing.local.xcconfig.example to create it.
+CODE_SIGN_STYLE = Automatic
+DEVELOPMENT_TEAM =
+
+#include? "Signing.local.xcconfig"
