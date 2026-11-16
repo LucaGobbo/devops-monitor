@@ -1,0 +1,189 @@
+name: Release
+
+# Push a tag like 1.2.3 (or v1.2.3) to build, sign, notarize and publish a DMG.
+# "Run workflow" (workflow_dispatch) does the same build as a dry run: the DMG
+# is only attached to the run as an artifact, nothing is published.
+on:
+  push:
+    tags: ["[0-9]+.[0-9]+.[0-9]+", "v[0-9]+.[0-9]+.[0-9]+"]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write # create the GitHub Release
+
+jobs:
+  release:
+    # The project file needs Xcode 27, which GitHub ships on its own runner label.
+    runs-on: xcode-27
+    timeout-minutes: 60
+    env:
+      # Pin the exact Xcode so a change of the image's default can't alter the build.
+      DEVELOPER_DIR: /Applications/Xcode_27.2.0.app/Contents/Developer
+      NOTARY_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
+      NOTARY_ISSUER_ID: ${{ secrets.NOTARY_API_ISSUER_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          sw_vers
+
+      - name: Test package
+        working-directory: Packages/Devops
+        run: swift test
+
+      - name: Resolve version
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          if [ "$REF_TYPE" = "tag" ]; then
+            echo "VERSION=${REF_NAME#v}" >> "$GITHUB_ENV"
+          else
+            echo "VERSION=0.0.0" >> "$GITHUB_ENV"
+          fi
+          echo "BUILD_NUMBER=$RUN_NUMBER" >> "$GITHUB_ENV"
+
+      - name: Import signing certificate
+        env:
+          CERT_P12_BASE64: ${{ secrets.DEVELOPER_ID_CERT_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.DEVELOPER_ID_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          echo "::add-mask::$KEYCHAIN_PASSWORD"
+          echo "$CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -P "$CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          # shellcheck disable=SC2046
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+          security find-identity -v -p codesigning "$KEYCHAIN"
+          echo "KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+
+      - name: Install provisioning profiles
+        env:
+          APP_PROFILE_BASE64: ${{ secrets.APP_PROVISIONING_PROFILE_BASE64 }}
+          WIDGET_PROFILE_BASE64: ${{ secrets.WIDGET_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          set -euo pipefail
+          DEST="$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
+          mkdir -p "$DEST"
+
+          # Installs a profile and prints "<name>|<team id>".
+          install_profile() {
+            local file="$RUNNER_TEMP/$1.provisionprofile" plist="$RUNNER_TEMP/$1.plist"
+            echo "$2" | base64 --decode > "$file"
+            security cms -D -i "$file" > "$plist"
+            cp "$file" "$DEST/$(plutil -extract UUID raw "$plist").provisionprofile"
+            echo "$(plutil -extract Name raw "$plist")|$(plutil -extract TeamIdentifier.0 raw "$plist")"
+          }
+
+          app="$(install_profile app "$APP_PROFILE_BASE64")"
+          widget="$(install_profile widget "$WIDGET_PROFILE_BASE64")"
+          [ "${app#*|}" = "${widget#*|}" ] || { echo "Profiles belong to different teams" >&2; exit 1; }
+
+          echo "APP_PROFILE_NAME=${app%|*}" >> "$GITHUB_ENV"
+          echo "WIDGET_PROFILE_NAME=${widget%|*}" >> "$GITHUB_ENV"
+          echo "TEAM_ID=${app#*|}" >> "$GITHUB_ENV"
+
+      - name: Archive
+        run: |
+          set -euo pipefail
+          # Signing is kept out of the project (see AGENTS.md); it is injected here.
+          # Each target picks its own profile through $(TARGET_NAME:c99extidentifier).
+          cat > "$RUNNER_TEMP/ci-signing.xcconfig" <<EOF
+          CODE_SIGN_STYLE = Manual
+          CODE_SIGN_IDENTITY = Developer ID Application
+          DEVELOPMENT_TEAM = $TEAM_ID
+          ENABLE_HARDENED_RUNTIME = YES
+          OTHER_CODE_SIGN_FLAGS = --timestamp --keychain $KEYCHAIN
+          PROVISIONING_PROFILE_SPECIFIER = \$(DM_PROFILE_\$(TARGET_NAME:c99extidentifier))
+          EOF
+
+          xcodebuild archive \
+            -project Devops-monitor.xcodeproj \
+            -scheme Devops-monitor \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -archivePath "$RUNNER_TEMP/Devops-monitor.xcarchive" \
+            -xcconfig "$RUNNER_TEMP/ci-signing.xcconfig" \
+            MARKETING_VERSION="$VERSION" \
+            CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            DM_PROFILE_Devops_monitor="$APP_PROFILE_NAME" \
+            DM_PROFILE_DevopsWidgetsExtension="$WIDGET_PROFILE_NAME"
+
+          APP="$RUNNER_TEMP/Devops-monitor.xcarchive/Products/Applications/Devops-monitor.app"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -d --entitlements - "$APP"
+          echo "APP_PATH=$APP" >> "$GITHUB_ENV"
+
+      - name: Write notarization key
+        env:
+          NOTARY_KEY_BASE64: ${{ secrets.NOTARY_API_KEY_P8_BASE64 }}
+        run: |
+          echo "$NOTARY_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+          echo "NOTARY_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
+
+      - name: Notarize and staple app
+        run: |
+          set -euo pipefail
+          ditto -c -k --keepParent "$APP_PATH" "$RUNNER_TEMP/Devops-monitor.zip"
+          scripts/notarize.sh "$RUNNER_TEMP/Devops-monitor.zip"
+          xcrun stapler staple "$APP_PATH"
+
+      - name: Build, sign, notarize and staple DMG
+        run: |
+          set -euo pipefail
+          DMG="$RUNNER_TEMP/Devops-monitor-$VERSION.dmg"
+          STAGE="$RUNNER_TEMP/dmg-root"
+          mkdir -p "$STAGE"
+          cp -R "$APP_PATH" "$STAGE/"
+          ln -s /Applications "$STAGE/Applications"
+
+          hdiutil create -volname "Devops-monitor" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
+          codesign --sign "Developer ID Application" --timestamp --keychain "$KEYCHAIN" "$DMG"
+          scripts/notarize.sh "$DMG"
+          xcrun stapler staple "$DMG"
+
+          xcrun stapler validate "$DMG"
+          spctl -a -t open --context context:primary-signature -vv "$DMG"
+          spctl -a -t exec -vv "$APP_PATH"
+
+          (cd "$RUNNER_TEMP" && shasum -a 256 "$(basename "$DMG")" > "$(basename "$DMG").sha256")
+          echo "DMG_PATH=$DMG" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Devops-monitor-${{ env.VERSION }}
+          path: |
+            ${{ env.DMG_PATH }}
+            ${{ env.DMG_PATH }}.sha256
+
+      - name: Publish GitHub Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" "$DMG_PATH" "$DMG_PATH.sha256" \
+            --title "$TAG" --generate-notes --verify-tag
+
+      - name: Clean up signing material
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
+          rm -f "$RUNNER_TEMP/AuthKey.p8" "$RUNNER_TEMP"/*.provisionprofile
+          rm -f "$HOME"/Library/Developer/Xcode/UserData/Provisioning\ Profiles/*.provisionprofile

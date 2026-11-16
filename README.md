@@ -117,6 +117,10 @@ If it fires, move the value into `Config/Signing.local.xcconfig` and revert the 
 - **"Signing requires a development team"**: `Config/Signing.local.xcconfig` is missing or still contains `YOURTEAMID`.
 - **Team keeps showing up in `git diff` of the project file**: you selected a team in the Xcode UI. Revert that change to the project file.
 
+## Releasing
+
+Tagging `X.Y.Z` builds, signs, notarizes and publishes a DMG through GitHub Actions. See `RELEASING.md` for the one-time setup.
+
 ## License
 
 0BSD: do whatever you want. See `LICENSE`.
