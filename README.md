@@ -45,7 +45,6 @@ DevopsWidgets/             widget extension (pull requests, pipelines)
 Packages/Devops/           everything else: one Swift package, one module per concern
 Config/                    signing xcconfig files
 scripts/                   pre-commit signing check and hook installer
-plans/, research/          design plans and research notes
 ```
 
 Inside `Packages/Devops`, dependencies are plain structs of closures (the protocol witness pattern), each split into an interface module and a `...Live` implementation:
@@ -117,3 +116,7 @@ If it fires, move the value into `Config/Signing.local.xcconfig` and revert the 
 
 - **"Signing requires a development team"**: `Config/Signing.local.xcconfig` is missing or still contains `YOURTEAMID`.
 - **Team keeps showing up in `git diff` of the project file**: you selected a team in the Xcode UI. Revert that change to the project file.
+
+## License
+
+0BSD: do whatever you want. See `LICENSE`.

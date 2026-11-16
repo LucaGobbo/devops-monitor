@@ -27,3 +27,7 @@ DerivedData/
 *.dSYM.zip
 ExportOptions.plist
 !.env.example
+
+# Third-party agent skills (not redistributed)
+.agents/
+.claude/
