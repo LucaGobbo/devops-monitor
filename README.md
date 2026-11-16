@@ -119,7 +119,7 @@ If it fires, move the value into `Config/Signing.local.xcconfig` and revert the 
 
 ## Releasing
 
-Tagging `vX.Y.Z` builds, signs, notarizes and publishes a DMG through GitHub Actions. See `RELEASING.md` for the one-time setup.
+Tagging `X.Y.Z` builds, signs, notarizes and publishes a DMG through GitHub Actions. See `RELEASING.md` for the one-time setup.
 
 ## License
 

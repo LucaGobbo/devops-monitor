@@ -1,11 +1,11 @@
 name: Release
 
-# Push a tag like v1.2.3 to build, sign, notarize and publish a DMG.
+# Push a tag like 1.2.3 (or v1.2.3) to build, sign, notarize and publish a DMG.
 # "Run workflow" (workflow_dispatch) does the same build as a dry run: the DMG
 # is only attached to the run as an artifact, nothing is published.
 on:
   push:
-    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+    tags: ["[0-9]+.[0-9]+.[0-9]+", "v[0-9]+.[0-9]+.[0-9]+"]
     branches: [ci/release-workflow] # TEMPORARY: test from the PR branch, remove before merging
   workflow_dispatch:
 

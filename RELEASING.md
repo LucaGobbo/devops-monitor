@@ -1,9 +1,9 @@
 # Releasing
 
-Pushing a tag `vX.Y.Z` runs `.github/workflows/release.yml`, which tests the package, builds the app, signs it with a Developer ID certificate, notarizes it and attaches a stapled `Devops-monitor-X.Y.Z.dmg` (plus a `.sha256`) to a new GitHub Release. Users open the DMG and drag the app to Applications; Gatekeeper does not warn.
+Pushing a tag `X.Y.Z` (a leading `v` is also accepted) runs `.github/workflows/release.yml`, which tests the package, builds the app, signs it with a Developer ID certificate, notarizes it and attaches a stapled `Devops-monitor-X.Y.Z.dmg` (plus a `.sha256`) to a new GitHub Release. Users open the DMG and drag the app to Applications; Gatekeeper does not warn.
 
 ```sh
-git tag v1.0.0 && git push origin v1.0.0
+git tag 0.0.3 && git push origin 0.0.3
 ```
 
 The version comes from the tag (`MARKETING_VERSION`), the build number from the workflow run number. **Actions > Release > Run workflow** does the same build as a dry run: the DMG is attached to the run, nothing is published. Do this once before the first real tag.
